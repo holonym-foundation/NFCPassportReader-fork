@@ -254,14 +254,14 @@ public class TagReader {
         return try await send( cmd: cmd )
     }
 
-    func send( cmd: NFCISO7816APDU, useExtendedMode : Bool = false ) async throws -> ResponseAPDU {
+    func send( cmd: NFCISO7816APDU, useExtendedMode : Bool = false, hasRetriedFor6C : Bool = false ) async throws -> ResponseAPDU {
         Logger.tagReader.debug( "TagReader - sending \(cmd)" )
         var toSend = cmd
         if let sm = secureMessaging {
             toSend = try sm.protect(apdu:cmd, useExtendedMode: useExtendedMode)
             Logger.tagReader.debug("TagReader - [SM] \(toSend)" )
         }
-        
+
         var (data, sw1, sw2) = try await tag.sendCommand(apdu: toSend)
         Logger.tagReader.debug( "TagReader - Received response, size \(data.count)b" )
 
@@ -276,15 +276,35 @@ public class TagReader {
         }
 
         var rep = ResponseAPDU(data: [UInt8](data), sw1: sw1, sw2: sw2)
-        
+
         if let sm = self.secureMessaging {
             rep = try sm.unprotect(rapdu:rep)
             Logger.tagReader.debug("\(String(format:"TagReader [SM - unprotected] \(binToHexRep(rep.data, asArray:true)), sw1:0x%02x sw2:0x%02x", rep.sw1, rep.sw2))" )
         } else {
             Logger.tagReader.debug("\(String(format:"TagReader [unprotected] \(binToHexRep(rep.data, asArray:true)), sw1:0x%02x sw2:0x%02x", rep.sw1, rep.sw2))" )
-            
+
         }
-        
+
+        // ISO/IEC 7816-4 §5.1.3: when the card returns 0x6C xx, the requested Le
+        // was wrong and sw2 carries the actual length. Re-issue the same APDU
+        // with the chip-suggested Le. Common on TD1 ID-card chips that account
+        // for Secure Messaging wrapper overhead and report the true payload size
+        // on the final READ BINARY of a data group. Guarded against loops with
+        // hasRetriedFor6C — a chip that returns 0x6C twice falls through to the
+        // normal error path below.
+        if rep.sw1 == 0x6C && !hasRetriedFor6C {
+            Logger.tagReader.debug( "TagReader - chip returned 0x6C, retrying with Le=0x\(binToHexRep(rep.sw2))" )
+            let retryCmd = NFCISO7816APDU(
+                instructionClass: cmd.instructionClass,
+                instructionCode: cmd.instructionCode,
+                p1Parameter: cmd.p1Parameter,
+                p2Parameter: cmd.p2Parameter,
+                data: cmd.data,
+                expectedResponseLength: Int(rep.sw2)
+            )
+            return try await send( cmd: retryCmd, useExtendedMode: useExtendedMode, hasRetriedFor6C: true )
+        }
+
         if rep.sw1 != 0x90 && rep.sw2 != 0x00 {
             Logger.tagReader.error( "Error reading tag: sw1 - 0x\(binToHexRep(sw1)), sw2 - 0x\(binToHexRep(sw2))" )
             let tagError: NFCPassportReaderError
