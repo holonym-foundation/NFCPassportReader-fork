@@ -27,7 +27,7 @@ public protocol PassportReaderTrackingDelegate: AnyObject {
 }
 
 @available(iOS 15, *)
-extension PassportReaderTrackingDelegate {
+public extension PassportReaderTrackingDelegate {
     func nfcTagDetected() { /* default implementation */ }
     func readCardAccess(cardAccess: CardAccess) { /* default implementation */ }
     func paceStarted() { /* default implementation */ }

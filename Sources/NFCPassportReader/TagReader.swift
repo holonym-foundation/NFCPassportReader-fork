@@ -296,22 +296,22 @@ public class TagReader {
 
         }
 
-        // ISO/IEC 7816-4 §5.1.3: when the card returns 0x6C xx, the requested Le
-        // was wrong and sw2 carries the actual length. Re-issue the same APDU
-        // with the chip-suggested Le. Common on TD1 ID-card chips that account
-        // for Secure Messaging wrapper overhead and report the true payload size
-        // on the final READ BINARY of a data group. Guarded against loops with
-        // hasRetriedFor6C — a chip that returns 0x6C twice falls through to the
-        // normal error path below.
+        // ISO/IEC 7816-4 §5.1.3: when the card returns 0x6C xx, the requested
+        // Le was wrong and sw2 carries the actual length. Re-issue the same
+        // APDU with the chip-suggested Le. Guarded against loops with
+        // hasRetriedFor6C — a chip returning 0x6C twice falls through to the
+        // normal error path. Note: sw2 == 0x00 encodes Le=256 (short-form Le
+        // of 0 means 256 per ISO/IEC 7816-4 §5.1).
         if rep.sw1 == 0x6C && !hasRetriedFor6C {
-            Logger.tagReader.debug( "TagReader - chip returned 0x6C, retrying with Le=0x\(binToHexRep(rep.sw2))" )
+            let suggestedLe = rep.sw2 == 0 ? 256 : Int(rep.sw2)
+            Logger.tagReader.debug( "TagReader - chip returned 0x6C, retrying with Le=\(suggestedLe)" )
             let retryCmd = NFCISO7816APDU(
                 instructionClass: cmd.instructionClass,
                 instructionCode: cmd.instructionCode,
                 p1Parameter: cmd.p1Parameter,
                 p2Parameter: cmd.p2Parameter,
                 data: cmd.data ?? Data(),
-                expectedResponseLength: Int(rep.sw2)
+                expectedResponseLength: suggestedLe
             )
             return try await send( cmd: retryCmd, useExtendedMode: useExtendedMode, hasRetriedFor6C: true )
         }
