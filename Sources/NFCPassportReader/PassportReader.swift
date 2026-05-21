@@ -459,7 +459,7 @@ extension PassportReader {
                 }
             }
             readAttempts += 1
-        } while ( readAttempts < 2 )
+        } while ( readAttempts < 3 )
 
         // The error will be thrown after n attempts
         throw nfcPassportReaderError
