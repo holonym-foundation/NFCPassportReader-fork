@@ -29,8 +29,19 @@ public class TagReader {
     }
     
     func reduceDataReadingAmount() {
-        if maxDataLengthToRead > 0xA0 {
-            maxDataLengthToRead = 0xA0
+        // Step the chunk size down through known-good values on retry.
+        // Previously this only fired when maxDataLengthToRead > 0xA0, which is
+        // a no-op at the default value — so PassportReader.readDataGroup's
+        // "Wrong length" / "End of file" retry ran with the same chunking
+        // and was guaranteed to repeat the failure. Stepping all the way
+        // down gives the retry budget something to try. Floor at 0x40 (64);
+        // anything smaller turns the read into so many round-trips that
+        // we risk Core NFC's session timeout on long data groups.
+        switch maxDataLengthToRead {
+        case let n where n > 0xA0: maxDataLengthToRead = 0xA0
+        case 0xA0:                 maxDataLengthToRead = 0x80
+        case 0x80:                 maxDataLengthToRead = 0x40
+        default:                   break
         }
     }
 
