@@ -310,7 +310,7 @@ public class TagReader {
                 instructionCode: cmd.instructionCode,
                 p1Parameter: cmd.p1Parameter,
                 p2Parameter: cmd.p2Parameter,
-                data: cmd.data,
+                data: cmd.data ?? Data(),
                 expectedResponseLength: Int(rep.sw2)
             )
             return try await send( cmd: retryCmd, useExtendedMode: useExtendedMode, hasRetriedFor6C: true )

@@ -23,6 +23,7 @@ public protocol PassportReaderTrackingDelegate: AnyObject {
     func bacStarted()
     func bacSucceeded()
     func bacFailed()
+    func readingDataGroup(_ dgId: DataGroupId)
 }
 
 @available(iOS 15, *)
@@ -35,6 +36,7 @@ extension PassportReaderTrackingDelegate {
     func bacStarted() { /* default implementation */ }
     func bacSucceeded() { /* default implementation */ }
     func bacFailed() { /* default implementation */ }
+    func readingDataGroup(_ dgId: DataGroupId) { /* default implementation */ }
 }
 
 @available(iOS 15, *)
@@ -405,6 +407,7 @@ extension PassportReader {
     func readDataGroup( tagReader : TagReader, dgId : DataGroupId ) async throws -> DataGroup?  {
 
         self.currentlyReadingDataGroup = dgId
+        trackingDelegate?.readingDataGroup(dgId)
         Logger.passportReader.info( "Reading tag - \(dgId.getName())" )
         var readAttempts = 0
         var nfcPassportReaderError: NFCPassportReaderError
