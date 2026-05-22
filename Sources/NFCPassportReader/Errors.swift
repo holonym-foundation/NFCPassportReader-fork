@@ -26,7 +26,14 @@ public enum NFCPassportReaderError: Error {
     case UnsupportedDataGroup
     case DataGroupNotRead
     case UnknownTag
-    case UnknownImageFormat
+    /// `rawPrefix` carries the first ≤16 bytes of the image-data
+    /// region (post CBEFF/BIT/face-record header) so the caller can
+    /// identify the format that was actually present on the chip
+    /// (e.g. PNG `89 50 4E 47`, WSQ `FF A0`, …). The bytes are file-
+    /// format magic + ISO/IEC 19794-5 image header — structural, not
+    /// pixel content — so they can be logged without leaking biometric
+    /// data. Empty if the slice was unavailable.
+    case UnknownImageFormat(rawPrefix: [UInt8])
     case NotImplemented
     case TagNotValid
     case ConnectionError
@@ -61,7 +68,9 @@ public enum NFCPassportReaderError: Error {
             case .UnsupportedDataGroup: return "UnsupportedDataGroup"
             case .DataGroupNotRead: return "DataGroupNotRead"
             case .UnknownTag: return "UnknownTag"
-            case .UnknownImageFormat: return "UnknownImageFormat"
+            case .UnknownImageFormat(let prefix):
+                let hex = prefix.map { String(format: "%02X", $0) }.joined()
+                return "UnknownImageFormat (prefix: \(hex))"
             case .NotImplemented: return "NotImplemented"
             case .TagNotValid: return "TagNotValid"
             case .ConnectionError: return "ConnectionError"
