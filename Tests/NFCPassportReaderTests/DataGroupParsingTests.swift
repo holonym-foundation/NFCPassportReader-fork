@@ -56,6 +56,22 @@ final class DataGroupParsingTests: XCTestCase {
         }
     }
     
+    func testDatagroup2ParsingJPEGWithoutJFIFHeader() {
+
+        // Real-world DG2 seen in the field: a baseline JPEG with no JFIF/APP0
+        // segment — it begins directly with a quantization-table marker
+        // (FF D8 FF DB 00 43 …) rather than FF D8 FF E0 "JFIF". This is a valid
+        // JPEG and must parse. Identical to `testDatagroup2ParsingJPEG` except
+        // the 10-byte image magic is swapped for the non-JFIF prefix.
+
+        let dg2 = hexRepToBin("75617F618220470201017F6082203FA1128002010081010282010087020101880200085F2E3846414300303130000000202600010000201800000000000000000001000000000000000100000000000000000000FFD8FFDB004300281C1E")
+        let dgp = DataGroupParser()
+        XCTAssertNoThrow(try dgp.parseDG(data: dg2)) { dg in
+            XCTAssertNotNil(dg)
+            XCTAssertTrue( dg is DataGroup2 )
+        }
+    }
+
     func testDatagroup7ParsingJPEG() {
         
         // This is a cut down version of the DG7 record. It contains everything up to the end of the image header - no actuall image data as its way too big to include here

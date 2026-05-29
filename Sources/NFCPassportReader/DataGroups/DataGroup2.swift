@@ -140,13 +140,21 @@ func getImage() -> UIImage? {
         offset += 2
         
         
-        // Make sure that the image data at least has a valid header
-        // Either JPG or JPEG2000
-        
-        let jpegHeader : [UInt8] = [0xff,0xd8,0xff,0xe0,0x00,0x10,0x4a,0x46,0x49,0x46]
+        // Make sure that the image data at least has a valid header.
+        // ICAO 9303 / ISO-IEC 19794-5 DG2 face images are JPEG or JPEG2000.
+        //
+        // JPEG is identified by the 3-byte SOI + marker prefix (FF D8 FF) —
+        // NOT by a full JFIF/APP0 header. Conformant encoders may emit a bare
+        // JPEG that begins directly with a quantization-table segment
+        // (FF D8 FF DB), or with EXIF/Adobe segments (FF D8 FF E1 / FF D8 FF EE),
+        // none of which carry the "JFIF" APP0 marker. Matching the full
+        // 10-byte JFIF header rejected those real-world images with
+        // UnknownImageFormat. JPEG2000 arrives either as the JP2 box format
+        // (00 00 00 0C 6A 50 …) or as a raw codestream (FF 4F FF 51).
+        let jpegSOI : [UInt8] = [0xff,0xd8,0xff]
         let jpeg2000BitmapHeader : [UInt8] = [0x00,0x00,0x00,0x0c,0x6a,0x50,0x20,0x20,0x0d,0x0a]
         let jpeg2000CodestreamBitmapHeader : [UInt8] = [0xff,0x4f,0xff,0x51]
-        
+
         // Capture up to 16 bytes of the image-data region so the
         // caller can identify the actual format (PNG, WSQ, raw, …).
         // These bytes are file-format magic + ISO 19794-5 header —
@@ -154,17 +162,21 @@ func getImage() -> UIImage? {
         let prefixEnd = min(offset + 16, data.count)
         let prefix = offset < data.count ? [UInt8](data[offset..<prefixEnd]) : []
 
-        if data.count < offset+jpeg2000CodestreamBitmapHeader.count {
+        // Each signature is bounds-checked independently: a record too short
+        // to contain a given signature simply does not match it (rather than
+        // crashing on an out-of-range slice, which the previous fixed-length
+        // guard allowed for lengths between the shortest and longest header).
+        func imageHasPrefix(_ signature: [UInt8]) -> Bool {
+            guard offset + signature.count <= data.count else { return false }
+            return [UInt8](data[offset..<offset+signature.count]) == signature
+        }
+
+        if !imageHasPrefix(jpegSOI) &&
+            !imageHasPrefix(jpeg2000BitmapHeader) &&
+            !imageHasPrefix(jpeg2000CodestreamBitmapHeader) {
             throw NFCPassportReaderError.UnknownImageFormat(rawPrefix: prefix)
         }
 
-
-        if [UInt8](data[offset..<offset+jpegHeader.count]) != jpegHeader &&
-            [UInt8](data[offset..<offset+jpeg2000BitmapHeader.count]) != jpeg2000BitmapHeader &&
-            [UInt8](data[offset..<offset+jpeg2000CodestreamBitmapHeader.count]) != jpeg2000CodestreamBitmapHeader {
-            throw NFCPassportReaderError.UnknownImageFormat(rawPrefix: prefix)
-        }
-        
         imageData = [UInt8](data[offset...])
     }
 }
