@@ -398,4 +398,16 @@ final class SecureMessagingTests: XCTestCase {
             try secureMessaging().unprotect(rapdu: ResponseAPDU(data: [UInt8](response.dropLast(10)), sw1: 0x90, sw2: 0x00))
         }
     }
+
+    // MARK: - Status words
+
+    func testOnlyNormalProcessingIsSuccess() {
+        XCTAssertTrue(TagReader.isSuccess(sw1: 0x90, sw2: 0x00))
+        for (sw1, sw2): (UInt8, UInt8) in [
+            (0x63, 0x00), (0x67, 0x00), (0x6A, 0x00), (0x6B, 0x00), (0x6D, 0x00), (0x6E, 0x00), (0x6F, 0x00),
+            (0x62, 0x00), (0x00, 0x00), (0x90, 0x01), (0x69, 0x82), (0x69, 0x88), (0x6A, 0x82),
+        ] {
+            XCTAssertFalse(TagReader.isSuccess(sw1: sw1, sw2: sw2), "status \(binToHexRep([sw1, sw2]))")
+        }
+    }
 }

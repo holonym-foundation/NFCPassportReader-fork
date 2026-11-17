@@ -316,7 +316,7 @@ public class TagReader {
             return try await send( cmd: retryCmd, useExtendedMode: useExtendedMode, hasRetriedFor6C: true )
         }
 
-        if rep.sw1 != 0x90 && rep.sw2 != 0x00 {
+        if !TagReader.isSuccess(sw1: rep.sw1, sw2: rep.sw2) {
             Logger.tagReader.error( "Error reading tag: sw1 - 0x\(binToHexRep(sw1)), sw2 - 0x\(binToHexRep(sw2))" )
             let tagError: NFCPassportReaderError
             if (rep.sw1 == 0x63 && rep.sw2 == 0x00) {
@@ -330,6 +330,13 @@ public class TagReader {
         }
 
         return rep
+    }
+
+    /// Only 9000 is success. The check used to be `sw1 != 0x90 && sw2 != 0x00`, which let
+    /// every status word ending in 00 through as success (6300, 6700, 6A00, 6B00, 6D00,
+    /// 6E00, 6F00), along with whatever bytes came with it.
+    static func isSuccess( sw1: UInt8, sw2: UInt8 ) -> Bool {
+        return sw1 == 0x90 && sw2 == 0x00
     }
 
     private func decodeError( sw1: UInt8, sw2:UInt8 ) -> String {
