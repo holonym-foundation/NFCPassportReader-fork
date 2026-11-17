@@ -190,10 +190,20 @@ public class SecureMessaging {
             guard dec.count == do87Data.count else {
                 throw NFCPassportReaderError.UnableToUnprotectAPDU
             }
-            data = unpad(dec)
+            data = try SecureMessaging.removePadding(dec)
         }
 
         return ResponseAPDU(data: data, sw1: sw1, sw2: sw2)
+    }
+
+    /// Removes ISO/IEC 7816-4 padding (80 then zero bytes). Like `unpad`, plaintext that
+    /// does not end in padding is returned as it is; unlike `unpad`, plaintext that is
+    /// all zero bytes throws instead of reading before the start of the buffer.
+    static func removePadding(_ padded : [UInt8]) throws -> [UInt8] {
+        guard let last = padded.lastIndex(where: { $0 != 0x00 }) else {
+            throw NFCPassportReaderError.UnableToUnprotectAPDU
+        }
+        return padded[last] == 0x80 ? [UInt8](padded[0 ..< last]) : padded
     }
 
     /// Reads a BER length at `index`: (length, number of bytes the length field takes).

@@ -188,7 +188,12 @@ public class TagReader {
         // Header looks like:  <tag><length of data><nextTag> e.g.60145F01 -
         // the total length is the 2nd value plus the two header 2 bytes
         // We've read 4 bytes so we now need to read the remaining bytes from offset 4
-        let (len, o) = try! asn1Length([UInt8](resp.data[1..<4]))
+        // A response without the four header bytes, or with a length form the reader
+        // does not support, is an error. It used to trap.
+        guard resp.data.count >= 4 else {
+            throw NFCPassportReaderError.CannotDecodeASN1Length
+        }
+        let (len, o) = try asn1Length([UInt8](resp.data[1..<4]))
         var remaining = Int(len)
         var amountRead = o + 1
         
@@ -217,6 +222,11 @@ public class TagReader {
             resp = try await self.send( cmd: cmd )
 
             Logger.tagReader.debug( "TagReader - got resp - \(binToHexRep(resp.data, asArray: true)), sw1 : \(resp.sw1), sw2 : \(resp.sw2)" )
+            // An empty answer makes no progress; without this the loop would run until
+            // the NFC session timed out.
+            guard !resp.data.isEmpty else {
+                throw NFCPassportReaderError.DataGroupNotRead
+            }
             data += resp.data
             
             remaining -= resp.data.count

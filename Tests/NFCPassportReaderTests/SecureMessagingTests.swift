@@ -370,6 +370,30 @@ final class SecureMessagingTests: XCTestCase {
         XCTAssertEqual([response.sw1, response.sw2], [0x90, 0x00])
     }
 
+    /// A correctly protected response whose plaintext is all zero bytes (no padding at
+    /// all) is refused. It used to read before the start of the buffer and trap.
+    func testAuthenticAllZeroPlaintextIsRefused() {
+        let session = bsiSessions[0]
+        let ssc = [UInt8](repeating: 0, count: 15) + [0x02]
+        let iv = AESECBEncrypt(key: session.ksEnc, message: ssc)
+        let cryptogram = AESEncrypt(key: session.ksEnc, message: [UInt8](repeating: 0, count: 16), iv: iv)
+        let do87: [UInt8] = [0x87, 0x11, 0x01] + cryptogram
+        let do99: [UInt8] = [0x99, 0x02, 0x90, 0x00]
+        let checksum = [UInt8](aesMAC(key: session.ksMac, msg: pad(ssc + do87 + do99, blockSize: 16))[0..<8])
+        assertThrows(.UnableToUnprotectAPDU) {
+            try session.secureMessaging(beforeResponse: 0)
+                .unprotect(rapdu: ResponseAPDU(data: do87 + do99 + [0x8E, 0x08] + checksum, sw1: 0x90, sw2: 0x00))
+        }
+    }
+
+    func testRemovePadding() throws {
+        XCTAssertEqual(try SecureMessaging.removePadding([0x60, 0x14, 0x80, 0x00]), [0x60, 0x14])
+        XCTAssertEqual(try SecureMessaging.removePadding([0x80, 0x00]), [])
+        XCTAssertEqual(try SecureMessaging.removePadding([0x60, 0x14]), [0x60, 0x14])
+        XCTAssertThrowsError(try SecureMessaging.removePadding([0x00, 0x00]))
+        XCTAssertThrowsError(try SecureMessaging.removePadding([]))
+    }
+
     // MARK: - ICAO 9303-11 appendix D.4 (3DES)
 
     private let icaoKSenc = hexRepToBin("979EC13B1CBFE9DCD01AB0FED307EAE5")
