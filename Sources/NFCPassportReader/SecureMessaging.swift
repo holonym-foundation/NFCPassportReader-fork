@@ -110,126 +110,117 @@ public class SecureMessaging {
         return newAPDU
     }
 
-    /// Unprotect the APDU following the iso7816 specification
+    /// Unprotect the response APDU (ICAO 9303-11 section 9.8.4).
+    ///
+    /// A response is returned as successful only when it carries DO'99' and an 8-byte
+    /// DO'8E', and the checksum computed over SSC, DO'87' and DO'99' with KSmac equals
+    /// DO'8E'. Anything else throws: `InvalidResponseChecksum` for a wrong checksum,
+    /// `MissingMandatoryFields` for an absent or malformed DO'99' or DO'8E', and
+    /// `D087Malformed` for a malformed DO'87'. Nothing is decrypted before the checksum
+    /// has been verified.
     func unprotect(rapdu : ResponseAPDU ) throws -> ResponseAPDU {
-        var needCC = false
-        var do87 : [UInt8] = []
-        var do87Data : [UInt8] = []
-        var do99 : [UInt8] = []
-        //var do8e : [UInt8] = []
-        var offset = 0
-        
         self.ssc = self.incSSC()
         let paddedSSC = algoName == .DES ? self.ssc : [UInt8](repeating: 0, count: 8) + ssc
-        Logger.secureMessaging.debug("\tIncrement SSC with 1")
-        Logger.secureMessaging.debug("\t\tSSC: \(binToHexRep(self.ssc))")
-                
-        // Check for a SM error
-        if(rapdu.sw1 != 0x90 || rapdu.sw2 != 0x00) {
-            return rapdu
+
+        // A status word other than 9000 is the chip reporting an error outside secure
+        // messaging. It is not authenticated, so pass on the status word only and never
+        // the bytes that came with it.
+        if rapdu.sw1 != 0x90 || rapdu.sw2 != 0x00 {
+            return ResponseAPDU(data: [], sw1: rapdu.sw1, sw2: rapdu.sw2)
         }
 
-        let rapduBin = rapdu.data + [rapdu.sw1, rapdu.sw2]
-        Logger.secureMessaging.debug("Receive response APDU of MRTD's chip")
-        Logger.secureMessaging.debug("\tRAPDU: \(binToHexRep(rapduBin))")
-        
-        // DO'87'
-        // Mandatory if data is returned, otherwise absent
-        if rapduBin[0] == 0x87 {
-            let (encDataLength, o) = try asn1Length([UInt8](rapduBin[1...]))
-            offset = 1 + o
-            
-            if rapduBin[offset] != 0x1 {
+        let body = rapdu.data
+        var offset = 0
+
+        // DO'87': mandatory if data is returned, otherwise absent.
+        var do87 : [UInt8] = []
+        var do87Data : [UInt8] = []
+        if body.first == 0x87 {
+            guard let (length, lengthSize) = SecureMessaging.berLength(body, at: 1) else {
                 throw NFCPassportReaderError.D087Malformed
             }
-            
-            do87 = [UInt8](rapduBin[0 ..< offset + Int(encDataLength)])
-            do87Data = [UInt8](rapduBin[offset+1 ..< offset + Int(encDataLength)])
-            offset += Int(encDataLength)
-            needCC = true
-        }
-        
-        //DO'99'
-        // Mandatory, only absent if SM error occurs
-        guard rapduBin.count >= offset + 5 else {
-            Logger.secureMessaging.error("size error")
-            let returnSw1 = (rapduBin.count >= offset+3) ? rapduBin[offset+2] : 0;
-            let returnSw2 = (rapduBin.count >= offset+4) ? rapduBin[offset+3] : 0;
-            return ResponseAPDU(data: [], sw1: returnSw1, sw2: returnSw2);
+            let valueStart = 1 + lengthSize
+            // The value is the padding-content indicator (01) and whole cipher blocks.
+            guard length > 1,
+                  (length - 1) % padLength == 0,
+                  valueStart + length <= body.count,
+                  body[valueStart] == 0x01 else {
+                throw NFCPassportReaderError.D087Malformed
+            }
+            do87 = [UInt8](body[0 ..< valueStart + length])
+            do87Data = [UInt8](body[valueStart + 1 ..< valueStart + length])
+            offset = valueStart + length
         }
 
-        do99 = [UInt8](rapduBin[offset..<offset+4])
-        let sw1 = rapduBin[offset+2]
-        let sw2 = rapduBin[offset+3]
-        offset += 4
-        needCC = true
-        
-        if do99[0] != 0x99 && do99[1] != 0x02 {
-            //SM error, return the error code
-            return ResponseAPDU(data: [], sw1: sw1, sw2: sw2)
-        }
-        
-        // DO'8E'
-        //Mandatory if DO'87' and/or DO'99' is present
-        if rapduBin[offset] == 0x8E {
-            let ccLength : Int = Int(binToHex(rapduBin[offset+1]))
-            let CC = [UInt8](rapduBin[offset+2 ..< offset+2+ccLength])
-            // do8e = [UInt8](rapduBin[offset ..< offset+2+ccLength])
-            
-            // CheckCC
-            var tmp = ""
-            if do87.count > 0 {
-                tmp += " DO'87"
-            }
-            if do99.count > 0 {
-                tmp += " DO'99"
-            }
-            Logger.secureMessaging.debug("Verify RAPDU CC by computing MAC of \(tmp)")
-            
-            let K = pad(paddedSSC + do87 + do99, blockSize:padLength)
-            Logger.secureMessaging.debug("\tConcatenate SSC and \(tmp) and add padding")
-            Logger.secureMessaging.debug("\t\tK: \(binToHexRep(K))")
-            
-            Logger.secureMessaging.debug("\tCompute MAC with KSmac")
-            var CCb = mac(algoName: algoName, key: self.ksmac, msg: K)
-            if CCb.count > 8 {
-                CCb = [UInt8](CC[0..<8])
-            }
-            Logger.secureMessaging.debug("\t\tCC: \(binToHexRep(CCb))")
-            
-            let res = (CC == CCb)
-            Logger.secureMessaging.debug("\tCompare CC with data of DO'8E of RAPDU")
-            Logger.secureMessaging.debug("\t\t\(binToHexRep(CC))  == \(binToHexRep(CCb)) ? \(res)")
-            
-            if !res {
-                throw NFCPassportReaderError.InvalidResponseChecksum
-            }
-        }
-        else if needCC {
+        // DO'99': mandatory. It is absent only when the chip reports a secure messaging
+        // error, and then the status word is not 9000 (handled above).
+        guard body.count >= offset + 4, body[offset] == 0x99, body[offset + 1] == 0x02 else {
             throw NFCPassportReaderError.MissingMandatoryFields
         }
-        
+        let do99 = [UInt8](body[offset ..< offset + 4])
+        let sw1 = do99[2]
+        let sw2 = do99[3]
+        offset += 4
+
+        // DO'8E': mandatory, and always 8 bytes.
+        guard body.count >= offset + 10, body[offset] == 0x8E, body[offset + 1] == 0x08 else {
+            throw NFCPassportReaderError.MissingMandatoryFields
+        }
+        let CC = [UInt8](body[offset + 2 ..< offset + 10])
+
+        // The checksum is the MAC over the padded SSC || DO'87' || DO'99', truncated to
+        // 8 bytes (AES-CMAC is 16 bytes long; the 3DES retail MAC is already 8).
+        let K = pad(paddedSSC + do87 + do99, blockSize: padLength)
+        let computed = mac(algoName: algoName, key: self.ksmac, msg: K)
+        guard computed.count >= 8,
+              SecureMessaging.constantTimeEquals([UInt8](computed[0 ..< 8]), CC) else {
+            throw NFCPassportReaderError.InvalidResponseChecksum
+        }
+
         var data : [UInt8] = []
         if do87Data.count > 0 {
-            
             let dec : [UInt8]
             if algoName == .DES {
                 dec = tripleDESDecrypt(key: self.ksenc, message: do87Data, iv: [0,0,0,0,0,0,0,0])
             } else {
                 // for AES the IV is the ssc with AES/EBC/NOPADDING
-                let paddedssc = [UInt8](repeating: 0, count: 8) + ssc
-                let iv = AESECBEncrypt(key: ksenc, message: paddedssc)
+                let iv = AESECBEncrypt(key: ksenc, message: paddedSSC)
                 dec = AESDecrypt(key: self.ksenc, message: do87Data, iv: iv)
             }
-
-            // There is a payload
+            guard dec.count == do87Data.count else {
+                throw NFCPassportReaderError.UnableToUnprotectAPDU
+            }
             data = unpad(dec)
-            Logger.secureMessaging.debug("Decrypt data of DO'87 with KSenc")
-            Logger.secureMessaging.debug("\tDecryptedData: \(binToHexRep(data))")
         }
-        
-        Logger.secureMessaging.debug("Unprotected APDU: [\(binToHexRep(data))] \(binToHexRep(sw1)) \(binToHexRep(sw2))" )
+
         return ResponseAPDU(data: data, sw1: sw1, sw2: sw2)
+    }
+
+    /// Reads a BER length at `index`: (length, number of bytes the length field takes).
+    /// Nil when the field is cut off or uses a form secure messaging never needs.
+    static func berLength(_ bytes : [UInt8], at index : Int) -> (Int, Int)? {
+        guard index < bytes.count else { return nil }
+        let first = bytes[index]
+        if first < 0x80 {
+            return (Int(first), 1)
+        }
+        if first == 0x81, index + 1 < bytes.count {
+            return (Int(bytes[index + 1]), 2)
+        }
+        if first == 0x82, index + 2 < bytes.count {
+            return (Int(bytes[index + 1]) << 8 | Int(bytes[index + 2]), 3)
+        }
+        return nil
+    }
+
+    /// Compares two byte strings in time that depends only on their length.
+    static func constantTimeEquals(_ a : [UInt8], _ b : [UInt8]) -> Bool {
+        guard a.count == b.count else { return false }
+        var difference : UInt8 = 0
+        for i in 0 ..< a.count {
+            difference |= a[i] ^ b[i]
+        }
+        return difference == 0
     }
 
     func maskClassAndPad(apdu : NFCISO7816APDU ) -> [UInt8] {
